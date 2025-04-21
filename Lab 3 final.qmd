@@ -173,6 +173,7 @@ plot <- ggplot(data = graph_data, aes(y = percent_agree/100, x = country, color 
 
 # Data 
 ```{r}
+#| title: Preview of World Data
 
 library(knitr)
 kable(head(joined_data), caption = "Preview of World Data")
