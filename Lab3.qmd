@@ -1,0 +1,239 @@
+---
+title: "Lab 3"
+author: "Sydney Potkey"
+format: 
+  dashboard:
+    theme: lumen
+    orientation: columns
+    logo: images/download.png
+    nav-buttons: 
+      - icon: github
+        href: https://github.com/SydneyPotkey/olympic.dashboard
+        aria-label: GitHub
+      - icon: envelope
+        href: "mailto:sydneygp72@gmail.com"
+        aria-label: Email
+    
+---
+
+```{r}
+#| label: load-packages
+#| message: false
+library(tidyverse)
+library(gt)
+```
+
+```{r}
+#| label: load-data
+
+library(readxl)
+world_data <- read_excel("/Users/sydneypotkey/Desktop/wgm2018-dataset-crosstabs-all-countries.xlsx", sheet = 1)
+world_data_full <- read_excel("/Users/sydneypotkey/Desktop/wgm2018-dataset-crosstabs-all-countries.xlsx", sheet = 2)
+world_data <- read_excel("/Users/sydneypotkey/Desktop/wgm2018-dataset-crosstabs-all-countries.xlsx", sheet = 3)
+
+```
+
+
+
+```{r}
+#| label: filtering data
+data_dictionary <- world_data |>
+  filter(`Variable Name` == "WP5" ) |>
+  mutate(code_list = str_split(`Variable Type & Codes*`, ",")) |>
+  select(code_list) |>                      
+  unnest(code_list) |>                       
+  mutate(code_list = str_trim(code_list)) |> 
+  separate(code_list, into = c("WP5", "country"), sep = "=") |>
+  mutate(WP5 = as.character(WP5))
+
+
+world_data_full <- world_data_full |> 
+  mutate(WP5 = as.character(WP5))
+
+  
+
+joined_data <- inner_join(world_data_full, data_dictionary, by = "WP5" )
+  
+science_percent <- joined_data |> 
+  group_by(country) |> 
+  summarise(
+    total_respondents = n(),
+    studied_science = sum(Q5C == 1, na.rm = TRUE),
+    percent_studied_science = 100 * studied_science / total_respondents
+  ) |> 
+  arrange(desc(percent_studied_science))
+
+#data for vaccine plot 
+
+joined <- joined_data |>
+  select(country, Q25, Regions_Report)
+
+graph_data <- joined |> 
+  mutate(region = case_when(Regions_Report %in% c(9, 10, 11, 12)~"Asia", Regions_Report %in% c(1, 2, 4, 5)~"Sub-Saharan Africa", Regions_Report %in% c(6, 7, 8)~"Americas", Regions_Report %in% c(14, 15, 16, 17)~"Europe", Regions_Report == 18~"Australia & NZ", Regions_Report %in% c(3, 13)~"North Africa & Middle East")) |>
+  filter(!is.na(region)) |>
+  group_by(country, region) |> 
+  summarise(total_respondents = n(),
+    agree = sum(Q25 == 1, na.rm = TRUE),
+    percent_agree = 100 * agree / total_respondents
+  ) |> 
+  arrange(desc(percent_agree)) 
+  
+
+compare <- full_join(science_percent, graph_data, by = "country") |>
+  select(country, percent_studied_science, percent_agree) |>
+  rename(`% Believe in Vaccines` = percent_agree, `% Studied Science` = percent_studied_science) |>
+  arrange(desc(`% Believe in Vaccines`), country)
+
+compare_sci <- compare |>
+  arrange(desc(`% Studied Science`), country)
+
+
+```
+# Graphs
+
+## Column - Graphs
+
+### Row - Map
+```{r}
+#| title: Higher Science Education Across Countries
+
+#following format of map of India from Lab 2
+
+library(leaflet)
+library(data.table)
+library(tidyverse)
+library(sf)
+library(RColorBrewer)
+library(rnaturalearth)
+library(rnaturalearthhires) 
+
+
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+science_percent <- science_percent |> 
+  mutate(country = tolower(trimws(country)))
+
+world <- world |> 
+  mutate(country = tolower(trimws(name)))
+
+map_data <- left_join(world, science_percent, by = "country") |> 
+  filter(!is.na(percent_studied_science))
+
+
+pal <- colorNumeric("Greens", domain = map_data$percent_science)
+
+
+leaflet(map_data) |> 
+  addProviderTiles("CartoDB.Voyager") |> 
+  addPolygons(fillColor = ~pal(percent_studied_science),
+    color = "white",
+    weight = 0.5,
+    fillOpacity = 0.8,
+    label = ~paste0(name, ": ", round(percent_studied_science, 1), "% studied science"),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      bringToFront = TRUE)) |> 
+  addLegend(pal = pal,
+    values = ~percent_studied_science,
+    title = "% Studied Science in Grad School",
+    position = "bottomright" )
+
+
+
+```
+
+### Row - Scatter {.fill}
+```{r}
+#| title: Vaccine Belief Across Regions
+#| message: false
+#| echo: false
+#| padding: 0px
+
+library(scales)
+library(ggiraph)
+
+cbp2 <- c("#000000", "#E69F00", "#56B4E9", "#009E73",
+          "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+  
+
+plot <- ggplot(data = graph_data, aes(y = percent_agree/100, x = country, color = region, tooltip = country, data_id = country)) +
+  geom_point_interactive(size = 2) + 
+  facet_grid(~region, labeller = label_wrap_gen(width = 15)) +
+  labs(x = "", subtitle  = "Percent Who Believe Vaccines Are Safe", title = "Percent of Population That Believe Vaccinces Are Safe by Region", y = "") + 
+  theme_light()+ 
+  scale_color_manual(values = cbp2) +
+  scale_y_continuous(labels = label_percent()) +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        legend.position = "none", 
+        plot.title = element_text(face = "bold")) 
+
+plot
+  
+ 
+
+
+```
+
+## Column - Comparing by Country {.tabset}
+
+```{r}
+#| title: Highest Percent Vaccines
+
+library(viridis)
+library(scales)
+
+
+compare |>
+  gt() |>
+  cols_align(align = "left", columns = "country") |>
+  data_color(
+    columns = c(`% Studied Science`, `% Believe in Vaccines`),
+    method = "numeric",
+    palette = viridis(8, option = "mako")  # Direct use of viridis() here
+  )
+
+
+
+  
+
+```
+
+
+```{r}
+#| title: Highest Percent Studied
+
+compare_sci |>
+  gt() |>
+  cols_align(align = "left", column = "country") |>
+  data_color(
+    columns = c(`% Studied Science`, `% Believe in Vaccines`),
+    method = "numeric",
+    palette = viridis(8, option = "mako")  # Direct use of viridis() here
+  )
+
+
+```
+
+
+```{r}
+#| title: Lowest Percent Studied
+
+
+
+```
+
+
+
+# Data 
+```{r}
+#| title: Preview of World Data
+
+library(knitr)
+kable(head(joined_data), caption = "Preview of World Data")
+
+```
+
